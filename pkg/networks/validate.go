@@ -7,15 +7,17 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
-	"syscall"
 
 	"github.com/lima-vm/lima/pkg/osutil"
 )
 
-func (config *NetworksConfig) Validate() error {
+func (c *Config) Validate() error {
 	// validate all paths.* values
-	paths := reflect.ValueOf(&config.Paths).Elem()
+	paths := reflect.ValueOf(&c.Paths).Elem()
+	pathsMap := make(map[string]string, paths.NumField())
+	var socketVMNetNotFound bool
 	for i := 0; i < paths.NumField(); i++ {
 		// extract YAML name from struct tag; strip options like "omitempty"
 		name := paths.Type().Field(i).Tag.Get("yaml")
@@ -23,18 +25,28 @@ func (config *NetworksConfig) Validate() error {
 			name = name[:i]
 		}
 		path := paths.Field(i).Interface().(string)
+		pathsMap[name] = path
 		// varPath will be created securely, but any existing parent directories must already be secure
 		if name == "varRun" {
 			path = findBaseDirectory(path)
 		}
 		err := validatePath(path, name == "varRun")
 		if err != nil {
-			// sudoers file does not need to exist; otherwise `limactl sudoers` couldn't bootstrap
-			if name == "sudoers" && errors.Is(err, os.ErrNotExist) {
-				continue
+			if errors.Is(err, os.ErrNotExist) {
+				switch name {
+				// sudoers file does not need to exist; otherwise `limactl sudoers` couldn't bootstrap
+				case "sudoers":
+					continue
+				case "socketVMNet":
+					socketVMNetNotFound = true
+					continue
+				}
 			}
 			return fmt.Errorf("networks.yaml field `paths.%s` error: %w", name, err)
 		}
+	}
+	if socketVMNetNotFound {
+		return fmt.Errorf("networks.yaml: %q (`paths.socketVMNet`) has to be installed", pathsMap["socketVMNet"])
 	}
 	// TODO(jandubois): validate network definitions
 	return nil
@@ -73,11 +85,15 @@ func validatePath(path string, allowDaemonGroupWritable bool) error {
 	if (fi.Mode() & fs.ModeSymlink) != 0 {
 		return fmt.Errorf("%s %q is a symlink", file, path)
 	}
-	stat, ok := fi.Sys().(*syscall.Stat_t)
+	stat, ok := osutil.SysStat(fi)
 	if !ok {
 		// should never happen
 		return fmt.Errorf("could not retrieve stat buffer for %q", path)
 	}
+	if runtime.GOOS != "darwin" {
+		return errors.New("vmnet code must not be called on non-Darwin") // TODO: move to *_darwin.go
+	}
+	// TODO: cache looked up UIDs/GIDs
 	root, err := osutil.LookupUser("root")
 	if err != nil {
 		return err
@@ -90,18 +106,18 @@ func validatePath(path string, allowDaemonGroupWritable bool) error {
 		if err != nil {
 			return err
 		}
-		if fi.Mode()&020 != 0 && stat.Gid != root.Gid && stat.Gid != daemon.Gid {
+		if fi.Mode()&0o20 != 0 && stat.Gid != root.Gid && stat.Gid != daemon.Gid {
 			return fmt.Errorf(`%s %q is group-writable and group is neither %q (gid: %d) nor %q (gid: %d), but is gid: %d`,
 				file, path, root.User, root.Gid, daemon.User, daemon.Gid, stat.Gid)
 		}
-		if fi.Mode().IsDir() && fi.Mode()&1 == 0 && (fi.Mode()&0010 == 0 || stat.Gid != daemon.Gid) {
+		if fi.Mode().IsDir() && fi.Mode()&1 == 0 && (fi.Mode()&0o010 == 0 || stat.Gid != daemon.Gid) {
 			return fmt.Errorf(`%s %q is not executable by the %q (gid: %d)" group`, file, path, daemon.User, daemon.Gid)
 		}
-	} else if fi.Mode()&020 != 0 && stat.Gid != root.Gid {
+	} else if fi.Mode()&0o20 != 0 && stat.Gid != root.Gid {
 		return fmt.Errorf(`%s %q is group-writable and group is not %q (gid: %d), but is gid: %d`,
 			file, path, root.User, root.Gid, stat.Gid)
 	}
-	if fi.Mode()&002 != 0 {
+	if fi.Mode()&0o02 != 0 {
 		return fmt.Errorf("%s %q is world-writable", file, path)
 	}
 	if path != "/" {

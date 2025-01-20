@@ -11,31 +11,45 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 
 	"github.com/lima-vm/lima/pkg/httputil"
 )
 
-// NewHTTPClientWithSocketPath creates a client.
-// socketPath is a path to the UNIX socket, without unix:// prefix.
-func NewHTTPClientWithSocketPath(socketPath string) (*http.Client, error) {
-	if _, err := os.Stat(socketPath); err != nil {
-		return nil, err
-	}
-	hc := &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				var d net.Dialer
-				return d.DialContext(ctx, "unix", socketPath)
-			},
-		},
-	}
-	return hc, nil
-}
-
 // Get calls HTTP GET and verifies that the status code is 2XX .
 func Get(ctx context.Context, c *http.Client, url string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, http.NoBody)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if err := Successful(resp); err != nil {
+		resp.Body.Close()
+		return nil, err
+	}
+	return resp, nil
+}
+
+func Head(ctx context.Context, c *http.Client, url string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, "HEAD", url, http.NoBody)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if err := Successful(resp); err != nil {
+		resp.Body.Close()
+		return nil, err
+	}
+	return resp, nil
+}
+
+func Post(ctx context.Context, c *http.Client, url string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, "POST", url, body)
 	if err != nil {
 		return nil, err
 	}
@@ -65,10 +79,10 @@ func readAtMost(r io.Reader, maxBytes int) ([]byte, error) {
 	return b, nil
 }
 
-// HTTPStatusErrorBodyMaxLength specifies the maximum length of HTTPStatusError.Body
+// HTTPStatusErrorBodyMaxLength specifies the maximum length of HTTPStatusError.Body.
 const HTTPStatusErrorBodyMaxLength = 64 * 1024
 
-// HTTPStatusError is created from non-2XX HTTP response
+// HTTPStatusError is created from non-2XX HTTP response.
 type HTTPStatusError struct {
 	// StatusCode is non-2XX status code
 	StatusCode int
@@ -101,4 +115,17 @@ func Successful(resp *http.Response) error {
 		}
 	}
 	return nil
+}
+
+// NewHTTPClientWithDialFn creates a client.
+// conn is a raw net.Conn instance.
+func NewHTTPClientWithDialFn(dialFn func(ctx context.Context) (net.Conn, error)) (*http.Client, error) {
+	hc := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return dialFn(ctx)
+			},
+		},
+	}
+	return hc, nil
 }

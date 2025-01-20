@@ -4,9 +4,12 @@ import (
 	"io"
 	"os"
 	"path"
+	"path/filepath"
+	"runtime"
 
 	"github.com/diskfs/go-diskfs/filesystem"
 	"github.com/diskfs/go-diskfs/filesystem/iso9660"
+	"github.com/sirupsen/logrus"
 )
 
 type Entry struct {
@@ -26,7 +29,17 @@ func Write(isoPath, label string, layout []Entry) error {
 
 	defer isoFile.Close()
 
-	fs, err := iso9660.Create(isoFile, 0, 0, 0, "")
+	workdir, err := os.MkdirTemp("", "diskfs_iso")
+	if err != nil {
+		return err
+	}
+	if runtime.GOOS == "windows" {
+		// go-embed unfortunately needs unix path
+		workdir = filepath.ToSlash(workdir)
+	}
+	logrus.Debugf("Creating iso file %s", isoFile.Name())
+	logrus.Debugf("Using %s as workspace", workdir)
+	fs, err := iso9660.Create(isoFile, 0, 0, 0, workdir)
 	if err != nil {
 		return err
 	}

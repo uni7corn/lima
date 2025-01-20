@@ -2,20 +2,20 @@ package networks
 
 import "net"
 
-type NetworksConfig struct {
+type Config struct {
 	Paths    Paths              `yaml:"paths"`
-	Group    string             `yaml:"group,omitempty"` // default: "staff"
+	Group    string             `yaml:"group,omitempty"` // default: "everyone"
 	Networks map[string]Network `yaml:"networks"`
 }
 
 type Paths struct {
-	VDESwitch string `yaml:"vdeSwitch"`
-	VDEVMNet  string `yaml:"vdeVMNet"`
-	VarRun    string `yaml:"varRun"`
-	Sudoers   string `yaml:"sudoers,omitempty"`
+	SocketVMNet string `yaml:"socketVMNet"`
+	VarRun      string `yaml:"varRun"`
+	Sudoers     string `yaml:"sudoers,omitempty"`
 }
 
 const (
+	ModeUserV2  = "user-v2"
 	ModeHost    = "host"
 	ModeShared  = "shared"
 	ModeBridged = "bridged"

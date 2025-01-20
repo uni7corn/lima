@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/gorilla/mux"
 	"github.com/lima-vm/lima/pkg/hostagent"
 	"github.com/lima-vm/lima/pkg/httputil"
 )
@@ -14,7 +13,7 @@ type Backend struct {
 	Agent *hostagent.HostAgent
 }
 
-func (b *Backend) onError(w http.ResponseWriter, r *http.Request, err error, ec int) {
+func (b *Backend) onError(w http.ResponseWriter, err error, ec int) {
 	w.WriteHeader(ec)
 	w.Header().Set("Content-Type", "application/json")
 	// err may potentially contain credential info (in a future version),
@@ -25,20 +24,25 @@ func (b *Backend) onError(w http.ResponseWriter, r *http.Request, err error, ec 
 	_ = json.NewEncoder(w).Encode(e)
 }
 
-// GetInfo is the handler for GET /v{N}/info
+// GetInfo is the handler for GET /v1/info.
 func (b *Backend) GetInfo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
 	ctx := r.Context()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	info, err := b.Agent.Info(ctx)
 	if err != nil {
-		b.onError(w, r, err, http.StatusInternalServerError)
+		b.onError(w, err, http.StatusInternalServerError)
 		return
 	}
 	m, err := json.Marshal(info)
 	if err != nil {
-		b.onError(w, r, err, http.StatusInternalServerError)
+		b.onError(w, err, http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -46,7 +50,6 @@ func (b *Backend) GetInfo(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(m)
 }
 
-func AddRoutes(r *mux.Router, b *Backend) {
-	v1 := r.PathPrefix("/v1").Subrouter()
-	v1.Path("/info").Methods("GET").HandlerFunc(b.GetInfo)
+func AddRoutes(r *http.ServeMux, b *Backend) {
+	r.Handle("/v1/info", http.HandlerFunc(b.GetInfo))
 }

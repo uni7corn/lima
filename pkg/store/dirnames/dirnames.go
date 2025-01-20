@@ -12,7 +12,7 @@ import (
 // DotLima is a directory that appears under the home directory.
 const DotLima = ".lima"
 
-// LimaDir returns the abstract path of `~/.lima` (or $LIMA_HOME, if set).
+// LimaDir returns the absolute path of `~/.lima` (or $LIMA_HOME, if set).
 //
 // NOTE: We do not use `~/Library/Application Support/Lima` on macOS.
 // We use `~/.lima` so that we can have enough space for the length of the socket path,
@@ -52,4 +52,13 @@ func LimaNetworksDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(limaDir, filenames.NetworksDir), nil
+}
+
+// LimaDisksDir returns the path of the disks directory, $LIMA_HOME/_disks.
+func LimaDisksDir() (string, error) {
+	limaDir, err := LimaDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(limaDir, filenames.DisksDir), nil
 }

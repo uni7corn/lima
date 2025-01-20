@@ -5,9 +5,9 @@
 # rules (before the instance is started). And once when the instance is
 # running to perform the tests:
 #
-# ./hack/test-port-forwarding.pl examples/default.yaml
-# limactl start --tty=false examples/default.yaml
-# git restore pkg/limayaml/default.yaml
+# ./hack/test-port-forwarding.pl templates/default.yaml
+# limactl --tty=false start templates/default.yaml
+# git restore templates/default.yaml
 # ./hack/test-port-forwarding.pl default
 #
 # TODO: support for ipv6 host addresses
@@ -22,8 +22,16 @@ use Sys::Hostname qw(hostname);
 
 my $instance = shift;
 
-my $ipv4 = inet_ntoa(scalar gethostbyname(hostname())) or die;
+my $addr = scalar gethostbyname(hostname());
+# If hostname address cannot be determines, use localhost to trigger fallback to system_profiler lookup
+my $ipv4 = length $addr ? inet_ntoa($addr) : "127.0.0.1";
 my $ipv6 = ""; # todo
+
+# macOS GitHub runners seem to use "localhost" as the hostname
+if ($ipv4 eq "127.0.0.1" && $Config{osname} eq "darwin") {
+    $ipv4 = qx(system_profiler SPNetworkDataType -json | jq -r 'first(.SPNetworkDataType[] | select(.ip_address) | .ip_address) | first');
+    chomp $ipv4;
+}
 
 # If $instance is a filename, add our portForwards to it to enable testing
 if (-f $instance) {
@@ -44,6 +52,17 @@ if (-f $instance) {
         print $fh $_;
     }
     exit;
+}
+
+# Check if netcat is available before running tests
+my $nc_path = `command -v nc 2>/dev/null`;
+chomp $nc_path;
+unless ($nc_path) {
+    die "Error: 'nc' (netcat) is not installed on the host system.\n" .
+        "Please install netcat to run this test script:\n" .
+        "  - On macOS: brew install netcat\n" .
+        "  - On Ubuntu/Debian: sudo apt-get install netcat\n" .
+        "  - On RHEL/CentOS: sudo yum install nmap-ncat\n";
 }
 
 # Otherwise $instance must be the name of an already running instance that has been
@@ -118,7 +137,7 @@ my $ha_log_size = -s $ha_log or die;
 foreach my $id (0..@test-1) {
     my $test = $test[$id];
     my $nc = "nc -l $test->{guest_ip} $test->{guest_port}";
-    if ($instance eq "alpine") {
+    if ($instance =~ /^alpine/) {
         $nc = "nc -l -s $test->{guest_ip} -p $test->{guest_port}";
     }
 
@@ -292,3 +311,22 @@ portForwards:
   # forward: 0.0.0.0      4033 → ipv4 4033
   # forward: ::           4034 → ipv4 4034
   # forward: ::1          4035 → ipv4 4035
+
+- guestIPMustBeZero: true
+  guestPortRange: [4040, 4049]
+
+- guestIP: "0.0.0.0"
+  guestPortRange: [4040, 4049]
+  ignore: true
+
+  # forward: 0.0.0.0        4040 → 127.0.0.1 4040
+  # forward: ::             4041 → 127.0.0.1 4041
+  # ignore:  127.0.0.1      4043 → 127.0.0.1 4043
+  # ignore:  192.168.5.15   4044 → 127.0.0.1 4044
+
+# This rule exist to test `nerdctl run` binding to 0.0.0.0 by default,
+# and making sure it gets forwarded to the external host IP.
+# The actual test code is in test-example.sh in the "port-forwarding" block.
+- guestIPMustBeZero: true
+  guestPort: 8888
+  hostIP: 0.0.0.0

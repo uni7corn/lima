@@ -21,22 +21,6 @@ func TestCheck(t *testing.T) {
 	assert.ErrorContains(t, err, "not defined")
 }
 
-func TestVDESock(t *testing.T) {
-	config, err := DefaultConfig()
-	assert.NilError(t, err)
-
-	vdeSock := config.VDESock("foo")
-	assert.Equal(t, vdeSock, "/private/var/run/lima/foo.ctl")
-}
-
-func TestPIDFile(t *testing.T) {
-	config, err := DefaultConfig()
-	assert.NilError(t, err)
-
-	pidFile := config.PIDFile("name", "daemon")
-	assert.Equal(t, pidFile, "/private/var/run/lima/name_daemon.pid")
-}
-
 func TestLogFile(t *testing.T) {
 	config, err := DefaultConfig()
 	assert.NilError(t, err)
@@ -50,25 +34,30 @@ func TestLogFile(t *testing.T) {
 func TestUser(t *testing.T) {
 	config, err := DefaultConfig()
 	assert.NilError(t, err)
-
-	user, err := config.User(Switch)
-	assert.NilError(t, err)
-	assert.Equal(t, user.User, "daemon")
-	assert.Equal(t, user.Group, config.Group)
-	if runtime.GOOS == "darwin" {
-		assert.Equal(t, user.Uid, uint32(1))
+	if runtime.GOOS != "darwin" && config.Group == "everyone" {
+		// The "everyone" group is a specific macOS feature to include non-local accounts.
+		config.Group = "staff"
+	}
+	if runtime.GOOS == "windows" {
+		// unimplemented
+		t.Skip()
 	}
 
-	user, err = config.User(VMNet)
-	assert.NilError(t, err)
-	assert.Equal(t, user.User, "root")
-	if runtime.GOOS == "darwin" {
-		assert.Equal(t, user.Group, "wheel")
-	} else {
-		assert.Equal(t, user.Group, "root")
-	}
-	assert.Equal(t, user.Uid, uint32(0))
-	assert.Equal(t, user.Gid, uint32(0))
+	t.Run("socket_vmnet", func(t *testing.T) {
+		if ok, _ := config.IsDaemonInstalled(SocketVMNet); !ok {
+			t.Skipf("socket_vmnet is not installed")
+		}
+		user, err := config.User(SocketVMNet)
+		assert.NilError(t, err)
+		assert.Equal(t, user.User, "root")
+		if runtime.GOOS == "darwin" {
+			assert.Equal(t, user.Group, "wheel")
+		} else {
+			assert.Equal(t, user.Group, "root")
+		}
+		assert.Equal(t, user.Uid, uint32(0))
+		assert.Equal(t, user.Gid, uint32(0))
+	})
 }
 
 func TestMkdirCmd(t *testing.T) {
@@ -83,23 +72,29 @@ func TestStartCmd(t *testing.T) {
 	config, err := DefaultConfig()
 	assert.NilError(t, err)
 
-	cmd := config.StartCmd("shared", Switch)
-	assert.Equal(t, cmd, "/opt/vde/bin/vde_switch --pidfile=/private/var/run/lima/shared_switch.pid "+
-		"--sock=/private/var/run/lima/shared.ctl --group=staff --dirmode=0770 --nostdin")
+	varRunDir := filepath.Join("/", "private", "var", "run", "lima")
 
-	cmd = config.StartCmd("shared", VMNet)
-	assert.Equal(t, cmd, "/opt/vde/bin/vde_vmnet --pidfile=/private/var/run/lima/shared_vmnet.pid --vde-group=staff --vmnet-mode=shared "+
-		"--vmnet-gateway=192.168.105.1 --vmnet-dhcp-end=192.168.105.254 --vmnet-mask=255.255.255.0 /private/var/run/lima/shared.ctl")
+	t.Run("socket_vmnet", func(t *testing.T) {
+		if ok, _ := config.IsDaemonInstalled(SocketVMNet); !ok {
+			t.Skipf("socket_vmnet is not installed")
+		}
 
-	cmd = config.StartCmd("bridged", VMNet)
-	assert.Equal(t, cmd, "/opt/vde/bin/vde_vmnet --pidfile=/private/var/run/lima/bridged_vmnet.pid --vde-group=staff --vmnet-mode=bridged "+
-		"--vmnet-interface=en0 /private/var/run/lima/bridged.ctl")
+		cmd := config.StartCmd("shared", SocketVMNet)
+		assert.Equal(t, cmd, "/opt/socket_vmnet/bin/socket_vmnet --pidfile="+filepath.Join(varRunDir, "shared_socket_vmnet.pid")+" --socket-group=everyone --vmnet-mode=shared "+
+			"--vmnet-gateway=192.168.105.1 --vmnet-dhcp-end=192.168.105.254 --vmnet-mask=255.255.255.0 "+filepath.Join(varRunDir, "socket_vmnet.shared"))
+
+		cmd = config.StartCmd("bridged", SocketVMNet)
+		assert.Equal(t, cmd, "/opt/socket_vmnet/bin/socket_vmnet --pidfile="+filepath.Join(varRunDir, "bridged_socket_vmnet.pid")+" --socket-group=everyone --vmnet-mode=bridged "+
+			"--vmnet-interface=en0 "+filepath.Join(varRunDir, "socket_vmnet.bridged"))
+	})
 }
 
 func TestStopCmd(t *testing.T) {
 	config, err := DefaultConfig()
 	assert.NilError(t, err)
 
+	varRunDir := filepath.Join("/", "private", "var", "run", "lima")
+
 	cmd := config.StopCmd("name", "daemon")
-	assert.Equal(t, cmd, "/usr/bin/pkill -F /private/var/run/lima/name_daemon.pid")
+	assert.Equal(t, cmd, "/usr/bin/pkill -F "+filepath.Join(varRunDir, "name_daemon.pid"))
 }

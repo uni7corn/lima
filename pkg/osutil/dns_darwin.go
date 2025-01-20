@@ -2,6 +2,7 @@ package osutil
 
 import (
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/lima-vm/lima/pkg/sysprof"
@@ -13,28 +14,31 @@ func DNSAddresses() ([]string, error) {
 		return nil, err
 	}
 	var addresses []string
-	if len(nwData) > 0 {
-		// Return DNS addresses from en0 interface
-		for _, nw := range nwData {
-			if nw.Interface == "en0" {
-				addresses = nw.DNS.ServerAddresses
-				break
-			}
-		}
-		// In case "en0" is not found, use the addresses of the first interface
-		if len(addresses) == 0 {
-			addresses = nwData[0].DNS.ServerAddresses
+	// Return DNS addresses from the first interface that has an IPv4 address.
+	// The networks are in service order already.
+	for _, nw := range nwData {
+		if len(nw.IPv4.Addresses) > 0 {
+			addresses = nw.DNS.ServerAddresses
+			break
 		}
 	}
 	return addresses, nil
 }
 
-func proxyURL(proxy string, port int) string {
-	if !strings.Contains(proxy, "://") {
+func proxyURL(proxy string, port any) string {
+	if strings.Contains(proxy, "://") {
+		if portNumber, ok := port.(float64); ok && portNumber != 0 {
+			proxy = fmt.Sprintf("%s:%.0f", proxy, portNumber)
+		} else if portString, ok := port.(string); ok && portString != "" {
+			proxy = fmt.Sprintf("%s:%s", proxy, portString)
+		}
+	} else {
+		if portNumber, ok := port.(float64); ok && portNumber != 0 {
+			proxy = net.JoinHostPort(proxy, fmt.Sprintf("%.0f", portNumber))
+		} else if portString, ok := port.(string); ok && portString != "" {
+			proxy = net.JoinHostPort(proxy, portString)
+		}
 		proxy = "http://" + proxy
-	}
-	if port != 0 {
-		proxy = fmt.Sprintf("%s:%d", proxy, port)
 	}
 	return proxy
 }
@@ -46,10 +50,11 @@ func ProxySettings() (map[string]string, error) {
 	}
 	env := make(map[string]string)
 	if len(nwData) > 0 {
-		// In case "en0" is not found, use the proxies of the first interface
-		proxies := nwData[0].Proxies
+		// Return proxy settings from the first interface that has an IPv4 address.
+		// The networks are in service order already.
+		var proxies sysprof.Proxies
 		for _, nw := range nwData {
-			if nw.Interface == "en0" {
+			if len(nw.IPv4.Addresses) > 0 {
 				proxies = nw.Proxies
 				break
 			}
